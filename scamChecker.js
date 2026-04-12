@@ -1,8 +1,20 @@
-// scamChecker_improved.js
-// Enhanced scam detection tool with better weighting, confidence scoring, and error handling
+// ============================================
+// SCAM CHECKER V7 - WITH SENTIMENT ANALYSIS & FEEDBACK
+// ============================================
+// Complete integrated version with:
+// - Sentiment analysis (filters defensive content)
+// - Feedback collection (improves model over time)
+// - Interactive user feedback prompts
+// ============================================
 
 require("dotenv").config();
 const axios = require("axios");
+const readline = require("readline");
+const path = require("path");
+
+// Import sentiment analyzer and feedback collector
+const sentimentAnalyzer = require("./sentiment-model/sentimentAnalyzer");
+const feedback = require("./sentiment-model/feedback");
 
 // ─── CONFIG ─────────────────────────────────────────────
 
@@ -150,7 +162,6 @@ function deduplicateSignals(signals) {
   const deduped = [];
 
   for (const sig of signals) {
-    // Create a signature based on normalized title
     const sig_key = sig.title.toLowerCase().slice(0, 50);
     if (!seen.has(sig_key)) {
       seen.add(sig_key);
@@ -159,6 +170,39 @@ function deduplicateSignals(signals) {
   }
 
   return deduped;
+}
+
+// ─── SENTIMENT FILTERING ────────────────────────────────
+
+function filterWithSentiment(results, entity) {
+  const filtered = [];
+  const skipped = [];
+
+  for (const r of results) {
+    const text = `${r.title} ${r.snippet}`;
+    
+    // Analyze sentiment
+    const sentiment = sentimentAnalyzer.analyze(text);
+    
+    // Skip defensive content (confidence > 70%)
+    if (sentiment.category === 'defensive' && parseFloat(sentiment.confidence) > 70) {
+      skipped.push({
+        title: r.title,
+        reason: `DEFENSIVE content (${sentiment.confidence}% confidence)`,
+        sentiment: sentiment.category
+      });
+      continue;
+    }
+    
+    // Keep this result with sentiment info
+    filtered.push({
+      ...r,
+      sentiment: sentiment.category,
+      sentiment_confidence: sentiment.confidence
+    });
+  }
+
+  return { filtered, skipped };
 }
 
 // ─── ANALYSIS ─────────────────────────────────────────
@@ -202,6 +246,8 @@ function analyzeResults(results, entity) {
       legit,
       weight,
       source: new URL(r.link).hostname,
+      sentiment: r.sentiment,
+      sentiment_confidence: r.sentiment_confidence
     });
   }
 
@@ -268,7 +314,7 @@ function formatResult(result) {
   console.log("\n" + "═".repeat(70));
   console.log("📊 SCAM DETECTION RESULT");
   console.log("═".repeat(70));
-  
+
   console.log(`\n🎯 Entity: ${result.entity}`);
   console.log(`📈 Risk Score: ${result.risk_score}%`);
   console.log(`🚨 Label: ${result.label}`);
@@ -278,11 +324,12 @@ function formatResult(result) {
   if (result.signals.length > 0) {
     console.log(`\n📋 Evidence (${result.signals.length} signals):`);
     console.log("─".repeat(70));
-    
+
     result.signals.forEach((sig, i) => {
       console.log(`\n${i + 1}. ${sig.title.slice(0, 60)}...`);
       console.log(`   Source: ${sig.source}`);
-      console.log(`   Weight: ${sig.weight} | Scam signals: ${sig.scam} | Legit signals: ${sig.legit}`);
+      console.log(`   Weight: ${sig.weight} | Scam: ${sig.scam} | Legit: ${sig.legit}`);
+      console.log(`   Sentiment: ${sig.sentiment} (${sig.sentiment_confidence}% confidence)`);
       console.log(`   Link: ${sig.link.slice(0, 70)}...`);
     });
   } else {
@@ -292,9 +339,151 @@ function formatResult(result) {
   console.log("\n" + "═".repeat(70) + "\n");
 }
 
+// ─── FEEDBACK PROMPT ────────────────────────────────────
+
+function createReadlineInterface() {
+  return readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+}
+
+async function askUserFeedback(signals) {
+  return new Promise((resolve) => {
+    const rl = createReadlineInterface();
+
+    console.log("\n" + "─".repeat(70));
+    console.log("📝 FEEDBACK - Help improve the model!");
+    console.log("─".repeat(70));
+    console.log("\nDo you want to provide feedback on any signals?");
+    console.log("This helps the sentiment analysis model learn better.\n");
+
+    const options = signals.map((sig, i) => ({
+      num: i + 1,
+      title: sig.title.slice(0, 50),
+      sentiment: sig.sentiment
+    }));
+
+    options.forEach(opt => {
+      console.log(`${opt.num}. "${opt.title}..."`);
+      console.log(`   Current: ${opt.sentiment}`);
+    });
+
+    console.log(`\nEnter signal number to correct (1-${signals.length}), or 'skip' to continue:\n`);
+
+    rl.question("Your choice: ", (answer) => {
+      if (answer.toLowerCase() === 'skip' || answer.trim() === '') {
+        rl.close();
+        resolve(null);
+        return;
+      }
+
+      const num = parseInt(answer);
+      if (num >= 1 && num <= signals.length) {
+        const signal = signals[num - 1];
+        rl.close();
+        resolve({ signalIndex: num - 1, signal });
+      } else {
+        console.log("❌ Invalid choice");
+        rl.close();
+        resolve(null);
+      }
+    });
+  });
+}
+
+async function askCorrectionCategory(signal) {
+  return new Promise((resolve) => {
+    const rl = createReadlineInterface();
+
+    console.log(`\n📝 Correcting: "${signal.title.slice(0, 50)}..."`);
+    console.log(`Current classification: ${signal.sentiment}`);
+    console.log("\nWhat should this be classified as?");
+    console.log("1. scam");
+    console.log("2. defensive");
+    console.log("3. legit");
+    console.log("4. skip\n");
+
+    rl.question("Your choice (1-4): ", (answer) => {
+      const map = { '1': 'scam', '2': 'defensive', '3': 'legit', '4': null };
+      const choice = map[answer];
+
+      if (choice === null && answer === '4') {
+        rl.close();
+        resolve(null);
+      } else if (choice) {
+        rl.close();
+        resolve(choice);
+      } else {
+        console.log("❌ Invalid choice");
+        rl.close();
+        resolve(null);
+      }
+    });
+  });
+}
+
+async function collectFeedback(signals) {
+  if (signals.length === 0) {
+    console.log("No signals to provide feedback on.");
+    return;
+  }
+
+  let collecting = true;
+  while (collecting) {
+    const choice = await askUserFeedback(signals);
+    
+    if (!choice) {
+      collecting = false;
+      break;
+    }
+
+    const signal = choice.signal;
+    const correctCategory = await askCorrectionCategory(signal);
+
+    if (!correctCategory) {
+      continue;
+    }
+
+    // Save feedback
+    const text = `${signal.title} ${signal.snippet || ''}`;
+    feedback.addFeedback(text, correctCategory);
+
+    console.log(`\n✅ Feedback saved!`);
+    console.log(`   Text: "${text.slice(0, 60)}..."`);
+    console.log(`   Corrected to: ${correctCategory}\n`);
+
+    // Ask if they want to continue
+    const rl = createReadlineInterface();
+    const answer = await new Promise(resolve => {
+      rl.question("Continue providing feedback? (yes/no): ", resolve);
+      rl.close();
+    });
+
+    if (answer.toLowerCase() !== 'yes' && answer.toLowerCase() !== 'y') {
+      collecting = false;
+    }
+  }
+
+  // Show feedback stats
+  const stats = feedback.getStats();
+  console.log("\n" + "─".repeat(70));
+  console.log("📊 Feedback Statistics:");
+  console.log(`   Scam examples: ${stats.scam}`);
+  console.log(`   Defensive examples: ${stats.defensive}`);
+  console.log(`   Legit examples: ${stats.legit}`);
+  console.log(`   Total feedback: ${stats.total}`);
+  console.log("─".repeat(70));
+  console.log("\n💡 Tip: When you have 20+ feedback examples, retrain:");
+  console.log("   cd sentiment-model");
+  console.log("   node merge_feedback.js  (to add feedback to training data)");
+  console.log("   node train.js           (to retrain the model)");
+  console.log("   node test.js            (to test improved accuracy)\n");
+}
+
 // ─── MAIN ANALYSIS FUNCTION ────────────────────────────
 
-async function analyze(input) {
+async function analyze(input, enableFeedback = true) {
   if (!input || input.trim().length === 0) {
     console.error("❌ Please provide a company name or domain");
     return null;
@@ -336,17 +525,39 @@ async function analyze(input) {
     };
   }
 
-  const { scamScore, legitScore, signals } = analyzeResults(allResults, entity);
+  // Filter with sentiment analysis
+  console.log("\n🧠 Filtering with sentiment analysis...");
+  const { filtered, skipped } = filterWithSentiment(allResults, entity);
+  
+  console.log(`  ✓ Kept: ${filtered.length} signals`);
+  console.log(`  ✗ Skipped (defensive): ${skipped.length} results`);
+
+  const { scamScore, legitScore, signals } = analyzeResults(filtered, entity);
   const verdict = computeVerdict(scamScore, legitScore, signals.length);
 
-  return {
+  const result = {
     entity,
     risk_score: verdict.score,
     label: verdict.label,
     confidence: verdict.confidence,
     reason: verdict.reason,
     signals: signals.slice(0, 5), // Top 5 signals
+    skippedDefensive: skipped.length
   };
+
+  // Format and display result
+  formatResult(result);
+
+  // Ask for feedback (only if signals exist and enabled)
+  if (enableFeedback && signals.length > 0) {
+    try {
+      await collectFeedback(signals);
+    } catch (err) {
+      console.log("Feedback collection skipped.");
+    }
+  }
+
+  return result;
 }
 
 // ─── CLI INTERFACE ──────────────────────────────────────
@@ -355,15 +566,20 @@ async function main() {
   const input = process.argv[2];
 
   if (!input) {
-    console.log("Usage: node scamChecker_improved.js <company-name-or-domain>");
-    console.log("Example: node scamChecker_improved.js codesoft");
+    console.log("Usage: node scamChecker_v7.js <company-name-or-domain> [--no-feedback]");
+    console.log("Example: node scamChecker_v7.js codesoft");
+    console.log("\nFlags:");
+    console.log("  --no-feedback     Skip feedback collection\n");
     process.exit(1);
   }
 
   try {
-    const result = await analyze(input);
+    // Check if feedback is disabled
+    const noFeedback = process.argv.includes('--no-feedback');
+
+    const result = await analyze(input, !noFeedback);
+    
     if (result) {
-      formatResult(result);
       console.log("✅ Analysis complete!");
     }
   } catch (err) {
