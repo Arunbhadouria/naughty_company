@@ -1,10 +1,12 @@
 // ============================================
-// SCAM CHECKER V7 - WITH SENTIMENT ANALYSIS & FEEDBACK
+// SCAM CHECKER V8 - HYBRID CONTENT FETCHING
 // ============================================
 // Complete integrated version with:
+// - Hybrid content fetching (validates URLs, fetches pages)
+// - Content quality verification with status badges
+// - Weighted risk scoring based on content source
 // - Sentiment analysis (filters defensive content)
-// - Feedback collection (improves model over time)
-// - Interactive user feedback prompts
+// - Feedback collection (tracks content source quality)
 // ============================================
 
 require("dotenv").config();
@@ -15,6 +17,9 @@ const path = require("path");
 // Import sentiment analyzer and feedback collector
 const sentimentAnalyzer = require("./sentiment-model/sentimentAnalyzer");
 const feedback = require("./sentiment-model/feedback");
+
+// Import hybrid content fetcher
+const { fetchAllContent, BADGES, BADGE_ICONS, BADGE_WEIGHTS } = require("./contentFetcher");
 
 // ─── CONFIG ─────────────────────────────────────────────
 
@@ -173,17 +178,19 @@ function deduplicateSignals(signals) {
 }
 
 // ─── SENTIMENT FILTERING ────────────────────────────────
+// Now uses fetchedText (full content) instead of just title+snippet
 
 function filterWithSentiment(results, entity) {
   const filtered = [];
   const skipped = [];
 
   for (const r of results) {
-    const text = `${r.title} ${r.snippet}`;
-    
+    // Use the fetched text (which may be full page content, snippet, or title)
+    const text = r.fetchedText || `${r.title} ${r.snippet}`;
+
     // Analyze sentiment
     const sentiment = sentimentAnalyzer.analyze(text);
-    
+
     // Skip defensive content (confidence > 70%)
     if (sentiment.category === 'defensive' && parseFloat(sentiment.confidence) > 70) {
       skipped.push({
@@ -193,7 +200,7 @@ function filterWithSentiment(results, entity) {
       });
       continue;
     }
-    
+
     // Keep this result with sentiment info
     filtered.push({
       ...r,
@@ -205,7 +212,11 @@ function filterWithSentiment(results, entity) {
   return { filtered, skipped };
 }
 
-// ─── ANALYSIS ─────────────────────────────────────────
+// ─── ANALYSIS (UPDATED WITH BADGE WEIGHTING) ───────────
+// The score now factors in the badge weight.
+// FULL_CONTENT results count at full weight (1.0x)
+// SNIPPET_ONLY results count at reduced weight (0.6x)
+// UNVERIFIABLE results count at minimal weight (0.3x)
 
 function analyzeResults(results, entity) {
   const entityBase = entity.split(".")[0];
@@ -216,7 +227,8 @@ function analyzeResults(results, entity) {
   let signals = [];
 
   for (const r of results) {
-    const text = `${r.title} ${r.snippet}`;
+    // Use fetched text (full content) for analysis
+    const text = r.fetchedText || `${r.title} ${r.snippet}`;
 
     // Strict entity filter: must mention the entity
     if (!entityRegex.test(text)) continue;
@@ -231,23 +243,37 @@ function analyzeResults(results, entity) {
     if (scam === 0 && legit === 0) continue;
 
     // Get source weight
-    const weight = getSourceWeight(r.link);
+    const sourceWeight = getSourceWeight(r.link);
+
+    // Get badge weight (how much we trust this content)
+    const badgeWeight = r.badgeWeight || BADGE_WEIGHTS.SNIPPET_ONLY;
+
+    // Combined weight: source credibility × content verification level
+    const combinedWeight = sourceWeight * badgeWeight;
 
     // Normalize scoring (ratio of scam signals)
     const ratio = scam / (scam + legit);
 
-    scamScore += ratio * weight;
-    legitScore += (1 - ratio) * weight;
+    scamScore += ratio * combinedWeight;
+    legitScore += (1 - ratio) * combinedWeight;
 
     signals.push({
       title: r.title,
       link: r.link,
       scam,
       legit,
-      weight,
+      sourceWeight,
+      badgeWeight,
+      combinedWeight: parseFloat(combinedWeight.toFixed(2)),
       source: new URL(r.link).hostname,
       sentiment: r.sentiment,
-      sentiment_confidence: r.sentiment_confidence
+      sentiment_confidence: r.sentiment_confidence,
+      // New badge fields
+      badge: r.badge || BADGES.UNVERIFIABLE,
+      badgeIcon: r.badgeIcon || BADGE_ICONS.UNVERIFIABLE,
+      contentSource: r.contentSource || "unknown",
+      analyzedText: (text || "").slice(0, 150) + "...",
+      qualityNote: r.qualityNote || "",
     });
   }
 
@@ -308,7 +334,7 @@ function computeVerdict(scamScore, legitScore, signalCount) {
   return { label, score: percent, confidence, reason };
 }
 
-// ─── FORMATTING ─────────────────────────────────────────
+// ─── FORMATTING (UPDATED WITH BADGES) ──────────────────
 
 function formatResult(result) {
   console.log("\n" + "═".repeat(70));
@@ -321,16 +347,36 @@ function formatResult(result) {
   console.log(`📊 Confidence: ${result.confidence}`);
   console.log(`💡 Reason: ${result.reason}`);
 
+  // Show content fetch stats
+  if (result.fetchStats) {
+    console.log(`\n🌐 Content Verification:`);
+    console.log(`   ${BADGE_ICONS.FULL_CONTENT} Full content verified: ${result.fetchStats.full}`);
+    console.log(`   ${BADGE_ICONS.SNIPPET_ONLY} Snippet only: ${result.fetchStats.snippet}`);
+    console.log(`   ${BADGE_ICONS.UNVERIFIABLE} Unverifiable: ${result.fetchStats.unverifiable}`);
+  }
+
   if (result.signals.length > 0) {
     console.log(`\n📋 Evidence (${result.signals.length} signals):`);
     console.log("─".repeat(70));
 
     result.signals.forEach((sig, i) => {
-      console.log(`\n${i + 1}. ${sig.title.slice(0, 60)}...`);
+      // Badge + title
+      console.log(`\n${i + 1}. ${sig.badgeIcon} [${sig.badge}] ${sig.title.slice(0, 55)}...`);
       console.log(`   Source: ${sig.source}`);
-      console.log(`   Weight: ${sig.weight} | Scam: ${sig.scam} | Legit: ${sig.legit}`);
+      console.log(`   Source Weight: ${sig.sourceWeight} × Badge Weight: ${sig.badgeWeight} = Combined: ${sig.combinedWeight}`);
+      console.log(`   Scam signals: ${sig.scam} | Legit signals: ${sig.legit}`);
       console.log(`   Sentiment: ${sig.sentiment} (${sig.sentiment_confidence}% confidence)`);
-      console.log(`   Link: ${sig.link.slice(0, 70)}...`);
+      console.log(`   Content from: ${sig.contentSource}`);
+      console.log(`   Analyzed text: "${sig.analyzedText}"`);
+      if (sig.qualityNote) {
+        console.log(`   Note: ${sig.qualityNote}`);
+      }
+      console.log(`   Link: ${sig.link}`);
+
+      // Show unverifiable warning
+      if (sig.badge === BADGES.UNVERIFIABLE) {
+        console.log(`   ⚠️  WARNING: This source could not be verified — treat with caution`);
+      }
     });
   } else {
     console.log("\n⚠️  No relevant signals found");
@@ -339,7 +385,7 @@ function formatResult(result) {
   console.log("\n" + "═".repeat(70) + "\n");
 }
 
-// ─── FEEDBACK PROMPT ────────────────────────────────────
+// ─── FEEDBACK PROMPT (UPDATED WITH CONTENT SOURCE) ──────
 
 function createReadlineInterface() {
   return readline.createInterface({
@@ -361,11 +407,12 @@ async function askUserFeedback(signals) {
     const options = signals.map((sig, i) => ({
       num: i + 1,
       title: sig.title.slice(0, 50),
-      sentiment: sig.sentiment
+      sentiment: sig.sentiment,
+      badge: sig.badge
     }));
 
     options.forEach(opt => {
-      console.log(`${opt.num}. "${opt.title}..."`);
+      console.log(`${opt.num}. [${opt.badge}] "${opt.title}..."`);
       console.log(`   Current: ${opt.sentiment}`);
     });
 
@@ -398,6 +445,7 @@ async function askCorrectionCategory(signal) {
 
     console.log(`\n📝 Correcting: "${signal.title.slice(0, 50)}..."`);
     console.log(`Current classification: ${signal.sentiment}`);
+    console.log(`Content source: ${signal.contentSource} [${signal.badge}]`);
     console.log("\nWhat should this be classified as?");
     console.log("1. scam");
     console.log("2. defensive");
@@ -432,7 +480,7 @@ async function collectFeedback(signals) {
   let collecting = true;
   while (collecting) {
     const choice = await askUserFeedback(signals);
-    
+
     if (!choice) {
       collecting = false;
       break;
@@ -445,13 +493,14 @@ async function collectFeedback(signals) {
       continue;
     }
 
-    // Save feedback
-    const text = `${signal.title} ${signal.snippet || ''}`;
-    feedback.addFeedback(text, correctCategory);
+    // Save feedback WITH content source info for training data quality tracking
+    const text = signal.analyzedText || `${signal.title} ${signal.snippet || ''}`;
+    feedback.addFeedback(text, correctCategory, signal.contentSource);
 
     console.log(`\n✅ Feedback saved!`);
     console.log(`   Text: "${text.slice(0, 60)}..."`);
-    console.log(`   Corrected to: ${correctCategory}\n`);
+    console.log(`   Corrected to: ${correctCategory}`);
+    console.log(`   Content source: ${signal.contentSource}\n`);
 
     // Ask if they want to continue
     const rl = createReadlineInterface();
@@ -525,13 +574,45 @@ async function analyze(input, enableFeedback = true) {
     };
   }
 
-  // Filter with sentiment analysis
+  // ═══════════════════════════════════════════════════════
+  // NEW: HYBRID CONTENT FETCHING
+  // This runs BEFORE sentiment analysis and scoring.
+  // It validates URLs, fetches actual page content,
+  // and tags each result with a status badge.
+  // ═══════════════════════════════════════════════════════
+  let enrichedResults;
+  let fetchStats;
+
+  try {
+    const fetchResult = await fetchAllContent(allResults, entity);
+    enrichedResults = fetchResult.enriched;
+    fetchStats = fetchResult.stats;
+  } catch (err) {
+    // Graceful degradation: if content fetching completely fails,
+    // fall back to the original snippet-only behavior
+    console.warn(`\n⚠️  Content fetching failed: ${err.message}`);
+    console.warn("    Falling back to snippet-only mode...\n");
+    enrichedResults = allResults.map(r => ({
+      ...r,
+      fetchedText: r.snippet || r.title || "",
+      contentSource: r.snippet ? "snippet" : "title",
+      badge: BADGES.SNIPPET_ONLY,
+      badgeIcon: BADGE_ICONS.SNIPPET_ONLY,
+      badgeWeight: BADGE_WEIGHTS.SNIPPET_ONLY,
+      linkStatus: "NOT_CHECKED",
+      qualityNote: "Content fetching unavailable — using SerpAPI data",
+    }));
+    fetchStats = { full: 0, snippet: enrichedResults.length, unverifiable: 0 };
+  }
+
+  // Filter with sentiment analysis (now using enriched/fetched text)
   console.log("\n🧠 Filtering with sentiment analysis...");
-  const { filtered, skipped } = filterWithSentiment(allResults, entity);
-  
+  const { filtered, skipped } = filterWithSentiment(enrichedResults, entity);
+
   console.log(`  ✓ Kept: ${filtered.length} signals`);
   console.log(`  ✗ Skipped (defensive): ${skipped.length} results`);
 
+  // Analyze with badge-weighted scoring
   const { scamScore, legitScore, signals } = analyzeResults(filtered, entity);
   const verdict = computeVerdict(scamScore, legitScore, signals.length);
 
@@ -542,7 +623,8 @@ async function analyze(input, enableFeedback = true) {
     confidence: verdict.confidence,
     reason: verdict.reason,
     signals: signals.slice(0, 5), // Top 5 signals
-    skippedDefensive: skipped.length
+    skippedDefensive: skipped.length,
+    fetchStats,  // Content fetch statistics
   };
 
   // Format and display result
@@ -566,8 +648,8 @@ async function main() {
   const input = process.argv[2];
 
   if (!input) {
-    console.log("Usage: node scamChecker_v7.js <company-name-or-domain> [--no-feedback]");
-    console.log("Example: node scamChecker_v7.js codesoft");
+    console.log("Usage: node scamChecker.js <company-name-or-domain> [--no-feedback]");
+    console.log("Example: node scamChecker.js codesoft");
     console.log("\nFlags:");
     console.log("  --no-feedback     Skip feedback collection\n");
     process.exit(1);
@@ -578,7 +660,7 @@ async function main() {
     const noFeedback = process.argv.includes('--no-feedback');
 
     const result = await analyze(input, !noFeedback);
-    
+
     if (result) {
       console.log("✅ Analysis complete!");
     }

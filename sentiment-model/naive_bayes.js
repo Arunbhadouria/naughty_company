@@ -85,19 +85,21 @@ class NaiveBayesClassifier {
   }
 
   // ============================================
-  // CALCULATE PROBABILITY
+  // CALCULATE LOG PROBABILITY
   // ============================================
-  // P(word | category) = How likely is this word in this category?
-  // Example: P("scam" | SCAM) = high
-  //          P("scam" | LEGIT) = low
+  // log P(word | category) = How likely is this word in this category?
+  // We use LOG probabilities to avoid floating-point underflow
+  // when multiplying many small numbers together.
+  // Example: log P("scam" | SCAM) = high (less negative)
+  //          log P("scam" | LEGIT) = low (more negative)
   
-  calculateProbability(word, category) {
+  calculateLogProbability(word, category) {
     const wordFreq = this.categories[category].wordFreq[word] || 0;
     const totalWords = this.categories[category].totalWords;
 
     // Laplace smoothing: add 1 to avoid zero probability
     // If word not seen before, still give it small probability
-    return (wordFreq + 1) / (totalWords + this.vocabulary.size);
+    return Math.log((wordFreq + 1) / (totalWords + this.vocabulary.size));
   }
 
   // ============================================
@@ -109,31 +111,39 @@ class NaiveBayesClassifier {
   
   classify(text) {
     const tokens = this.tokenize(text);
-    const scores = {};
+    const logScores = {};
     const probabilities = {};
 
-    // Calculate score for each category
+    // Calculate LOG score for each category
     for (const category in this.categories) {
-      // P(category) = How many docs in this category?
-      scores[category] = this.categoryTotals[category] / this.totalDocs;
+      // log P(category) = prior probability
+      logScores[category] = Math.log(this.categoryTotals[category] / this.totalDocs);
       
-      // Multiply by probability of each word in category
+      // SUM log probabilities (equivalent to multiplying raw probabilities
+      // but avoids floating-point underflow for long texts)
       for (const token of tokens) {
-        scores[category] *= this.calculateProbability(token, category);
+        logScores[category] += this.calculateLogProbability(token, category);
       }
     }
 
-    // Convert scores to percentages
-    const totalScore = Object.values(scores).reduce((a, b) => a + b, 0);
-    for (const category in scores) {
-      probabilities[category] = totalScore > 0 
-        ? (scores[category] / totalScore * 100).toFixed(2)
+    // Convert log scores to probabilities using log-sum-exp trick
+    // This avoids overflow/underflow when exponentiating
+    const maxLogScore = Math.max(...Object.values(logScores));
+    const expScores = {};
+    for (const category in logScores) {
+      expScores[category] = Math.exp(logScores[category] - maxLogScore);
+    }
+    const totalExpScore = Object.values(expScores).reduce((a, b) => a + b, 0);
+
+    for (const category in expScores) {
+      probabilities[category] = totalExpScore > 0 
+        ? (expScores[category] / totalExpScore * 100).toFixed(2)
         : 0;
     }
 
     // Find category with highest score
-    const predictedCategory = Object.keys(scores).reduce((a, b) => 
-      scores[a] > scores[b] ? a : b
+    const predictedCategory = Object.keys(logScores).reduce((a, b) => 
+      logScores[a] > logScores[b] ? a : b
     );
 
     return {

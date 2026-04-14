@@ -42,24 +42,35 @@ class FeedbackCollector {
   // ADD FEEDBACK
   // ============================================
   // User says: "This text should be SCAM, not DEFENSIVE"
-  // addFeedback(text, 'scam')
+  // addFeedback(text, 'scam', 'full_page')
   // Saves to feedback.json
+  // contentSource tracks where the text came from
+  // (full_page, snippet, title) for training quality
   
-  addFeedback(text, actualCategory) {
+  addFeedback(text, actualCategory, contentSource = 'unknown') {
     // Validate category
     if (!this.feedback[actualCategory]) {
       console.error(`❌ Invalid category: ${actualCategory}`);
       return false;
     }
 
-    // Don't add duplicates
-    if (this.feedback[actualCategory].includes(text)) {
+    // Don't add duplicates (check the text field for objects, or raw string)
+    const isDuplicate = this.feedback[actualCategory].some(entry => {
+      if (typeof entry === 'string') return entry === text;
+      return entry.text === text;
+    });
+
+    if (isDuplicate) {
       console.log("⚠️  This example already exists");
       return false;
     }
 
-    // Add new feedback
-    this.feedback[actualCategory].push(text);
+    // Add new feedback with content source metadata
+    this.feedback[actualCategory].push({
+      text,
+      contentSource,
+      timestamp: new Date().toISOString(),
+    });
     this.saveFeedback();
 
     return true;

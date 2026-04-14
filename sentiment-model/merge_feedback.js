@@ -50,22 +50,25 @@ console.log(`   Total: ${training.scam.length + training.defensive.length + trai
 const allFeedback = feedback.getAllFeedback();
 
 // Add scam feedback
-for (const text of allFeedback.scam) {
-  if (!training.scam.includes(text)) {
+for (const entry of allFeedback.scam) {
+  const text = typeof entry === 'string' ? entry : entry.text;
+  if (text && !training.scam.includes(text)) {
     training.scam.push(text);
   }
 }
 
 // Add defensive feedback
-for (const text of allFeedback.defensive) {
-  if (!training.defensive.includes(text)) {
+for (const entry of allFeedback.defensive) {
+  const text = typeof entry === 'string' ? entry : entry.text;
+  if (text && !training.defensive.includes(text)) {
     training.defensive.push(text);
   }
 }
 
 // Add legit feedback
-for (const text of allFeedback.legit) {
-  if (!training.legit.includes(text)) {
+for (const entry of allFeedback.legit) {
+  const text = typeof entry === 'string' ? entry : entry.text;
+  if (text && !training.legit.includes(text)) {
     training.legit.push(text);
   }
 }
