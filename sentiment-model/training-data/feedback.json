@@ -1,5 +1,11 @@
 {
-  "scam": [],
+  "scam": [
+    {
+      "text": "This is a scam alert for zorvyn...",
+      "contentSource": "full_page",
+      "timestamp": "2026-04-14T10:52:38.257Z"
+    }
+  ],
   "defensive": [],
   "legit": []
 }

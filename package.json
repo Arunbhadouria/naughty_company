@@ -4,15 +4,28 @@
   "description": "Scam detection tool using web search + Naive Bayes sentiment analysis",
   "main": "scamChecker.js",
   "scripts": {
-    "start": "node scamChecker.js",
-    "check": "node scamChecker.js",
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "cli": "node cli.js",
     "train": "node sentiment-model/train.js",
     "test:model": "node sentiment-model/test.js",
     "merge-feedback": "node sentiment-model/merge_feedback.js"
   },
   "dependencies": {
     "axios": "^1.15.0",
+    "bcryptjs": "^3.0.3",
     "cheerio": "^1.2.0",
-    "dotenv": "^17.4.1"
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.1",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.3.2",
+    "express-session": "^1.19.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.4.1",
+    "morgan": "^1.10.1",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0"
   }
 }
