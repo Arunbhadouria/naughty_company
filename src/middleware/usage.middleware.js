@@ -18,7 +18,7 @@ const usageTracker = async (req, res, next) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       req.user = await User.findById(decoded.id);
       if (req.user) {
-        return next(); // User is logged in, bypass freebie check
+        return next();
       }
     } catch (err) {
       // Invalid token, treat as anonymous
@@ -38,27 +38,32 @@ const usageTracker = async (req, res, next) => {
     });
   }
 
-  // Allow the scan, but prepare to set the cookie on success
+  // Intercept the response to set the "freebie used" cookie only on success
   const originalJson = res.json;
   res.json = function (data) {
-    if (data.success && data.data) {
+    if (data && data.success && data.data) {
       // Set the "freebie used" cookie
       res.cookie("naughty_freebie_used", "true", {
-        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        maxAge: 30 * 24 * 60 * 60 * 1000,
         httpOnly: true,
+        path: '/'
       });
 
-      // Also store the scan data in a temporary cookie so it can be recovered upon registration
-      const scanData = {
-        query: req.body.query,
-        timestamp: new Date(),
-      };
-      res.cookie("pending_scan_data", JSON.stringify(scanData), {
-        maxAge: 1 * 60 * 60 * 1000, // 1 hour
-        httpOnly: true,
-      });
+      // Store query for recovery
+      if (req.body && req.body.query) {
+        res.cookie("pending_scan_data", JSON.stringify({
+          query: req.body.query,
+          timestamp: new Date()
+        }), {
+          maxAge: 1 * 60 * 60 * 1000,
+          httpOnly: true,
+          path: '/'
+        });
+      }
     }
-    return originalJson.call(this, data);
+    // Restore the original function to prevent recursion and call it
+    res.json = originalJson;
+    return res.json(data);
   };
 
   next();
