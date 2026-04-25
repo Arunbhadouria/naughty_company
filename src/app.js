@@ -21,13 +21,22 @@ const app = express();
 
 // ─── MIDDLEWARE ─────────────────────────────────────────
 
-// Security headers
-app.use(helmet());
+// Security headers - Relaxed for OAuth redirects
+app.use(
+  helmet({
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: false, // In production, you should configure this properly
+  })
+);
 
 // CORS configuration
 const corsOptions = {
   origin: process.env.FRONTEND_URL || "http://localhost:5173",
-  optionsSuccessStatus: 200
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 200,
 };
 app.use(cors(corsOptions));
 
