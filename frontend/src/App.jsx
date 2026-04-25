@@ -4,13 +4,14 @@ import Dashboard from './pages/Dashboard';
 import AuthPages from './pages/AuthPages';
 import History from './pages/History';
 import Loader from './components/Loader';
+import api from './services/api';
 
 function App() {
   const [loading, setLoading] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
 
   useEffect(() => {
-    // Detect token from URL (OAuth callback fallback)
+    // 1. Detect token from URL (OAuth callback fallback)
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
     if (token) {
@@ -21,7 +22,10 @@ function App() {
       window.history.replaceState({}, '', url);
     }
 
-    // Show animation for 2 seconds
+    // 2. Pre-warm Backend (Render cold-start mitigation)
+    api.get('/health').catch(() => console.log('Waking up server...'));
+
+    // 3. Show animation for 2 seconds
     const timer = setTimeout(() => {
       setFadeOut(true);
       // Wait for fade animation to complete before removing from DOM
