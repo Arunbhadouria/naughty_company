@@ -53,7 +53,8 @@ router.get(
       expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
       httpOnly: true,
       path: "/",
-      secure: process.env.NODE_ENV === "production",
+      secure: true,
+      sameSite: "none",
     };
 
     res.cookie("token", token, options);
