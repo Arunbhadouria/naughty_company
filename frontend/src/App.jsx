@@ -10,6 +10,17 @@ function App() {
   const [fadeOut, setFadeOut] = useState(false);
 
   useEffect(() => {
+    // Detect token from URL (OAuth callback fallback)
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (token) {
+      localStorage.setItem('token', token);
+      // Clean up URL
+      const url = new URL(window.location);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url);
+    }
+
     // Show animation for 2 seconds
     const timer = setTimeout(() => {
       setFadeOut(true);

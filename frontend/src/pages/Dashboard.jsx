@@ -84,6 +84,7 @@ const Dashboard = () => {
   const handleLogout = async () => {
     try {
       await authService.logout();
+      localStorage.removeItem('token');
       window.location.reload();
     } catch (err) {
       console.error('Logout failed');

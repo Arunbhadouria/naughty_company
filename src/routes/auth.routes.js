@@ -60,7 +60,8 @@ router.get(
     res.cookie("token", token, options);
     res.clearCookie("pending_scan_data");
     res.clearCookie("naughty_freebie_used");
-    res.redirect(process.env.FRONTEND_URL || "http://localhost:5173");
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    res.redirect(`${frontendUrl}/?token=${token}`);
   }
 );
 

@@ -16,10 +16,15 @@ const AuthPages = ({ mode = 'login' }) => {
     e.preventDefault();
     setError(null);
     try {
+      let res;
       if (isLogin) {
-        await authService.login(formData);
+        res = await authService.login(formData);
       } else {
-        await authService.register(formData);
+        res = await authService.register(formData);
+      }
+      
+      if (res.token) {
+        localStorage.setItem('token', res.token);
       }
       window.location.href = '/';
     } catch (err) {
